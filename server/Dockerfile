@@ -1,7 +1,7 @@
 # ── Build stage ────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package*.json ./
+COPY server/package*.json ./
 RUN npm ci --omit=dev
 
 # ── Runtime stage ──────────────────────────────────────────────────────────────
@@ -12,7 +12,7 @@ WORKDIR /app
 RUN addgroup -S pinway && adduser -S pinway -G pinway
 
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY server/ .
 
 ENV NODE_ENV=production
 USER pinway
