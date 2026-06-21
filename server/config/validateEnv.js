@@ -1,71 +1,68 @@
 /**
  * validateEnv.js
- * Runs at startup. Prevents the server from launching with insecure or
- * missing configuration. Call this before anything else in index.js.
+ * Runs at startup. Blocks launch if config is missing or insecure.
+ *
+ * Supports Railway deployments:
+ *   - DATABASE_URL is accepted in place of individual DB_* variables
+ *   - NODE_ENV, PORT, and FRONTEND_URL are auto-set by Railway
  */
 
-const REQUIRED = [
-  "JWT_SECRET",
-  "DB_PASSWORD",
-  "DB_HOST",
-  "DB_NAME",
-  "DB_USER",
-];
-
-// Weak/default values that must never reach production
 const FORBIDDEN_VALUES = new Set([
-  "changeme",
-  "secret",
-  "password",
-  "admin",
-  "admin123",
-  "your_secret",
-  "replace_me",
-  "example",
-  "dev",
-  "test",
-  "12345",
-  "supersecret",
+  "changeme", "secret", "password", "admin", "admin123",
+  "your_secret", "replace_me", "example", "dev", "test",
+  "12345", "supersecret", "replace_with_long_random_secret_at_least_64_chars",
 ]);
 
 function validateEnv() {
   const errors = [];
   const warnings = [];
+  const isProduction = process.env.NODE_ENV === "production";
 
-  // 1. Check required variables are present
-  for (const key of REQUIRED) {
-    if (!process.env[key] || process.env[key].trim() === "") {
-      errors.push(`Missing required environment variable: ${key}`);
-    }
+  // ── JWT_SECRET ────────────────────────────────────────────────────────────
+  const jwtSecret = process.env.JWT_SECRET || "";
+  if (!jwtSecret) {
+    errors.push("Missing required environment variable: JWT_SECRET");
+  } else if (jwtSecret.length < 32) {
+    errors.push(`JWT_SECRET is too short (${jwtSecret.length} chars). Must be at least 32 characters.`);
+  } else if (isProduction && FORBIDDEN_VALUES.has(jwtSecret.toLowerCase())) {
+    errors.push("JWT_SECRET is set to a known-weak default value. Change it.");
   }
 
-  // 2. JWT_SECRET must be at least 32 characters
-  const jwtSecret = process.env.JWT_SECRET || "";
-  if (jwtSecret.length < 32) {
+  // ── Database: accept DATABASE_URL (Railway) OR individual DB_* vars ───────
+  const hasConnectionString = !!process.env.DATABASE_URL;
+  const hasIndividualVars = process.env.DB_HOST && process.env.DB_NAME &&
+                            process.env.DB_USER && process.env.DB_PASSWORD;
+
+  if (!hasConnectionString && !hasIndividualVars) {
     errors.push(
-      `JWT_SECRET is too short (${jwtSecret.length} chars). Must be at least 32 characters.`
+      "Database not configured. Set DATABASE_URL (Railway) " +
+      "or all of: DB_HOST, DB_NAME, DB_USER, DB_PASSWORD"
     );
   }
 
-  // 3. Reject obviously weak/default secrets in production
-  if (process.env.NODE_ENV === "production") {
-    if (FORBIDDEN_VALUES.has(jwtSecret.toLowerCase())) {
-      errors.push("JWT_SECRET is set to a known-weak default value. Change it immediately.");
-    }
-    if (FORBIDDEN_VALUES.has((process.env.DB_PASSWORD || "").toLowerCase())) {
+  if (!hasConnectionString && process.env.DB_PASSWORD) {
+    if (isProduction && FORBIDDEN_VALUES.has((process.env.DB_PASSWORD || "").toLowerCase())) {
       errors.push("DB_PASSWORD is set to a known-weak default value.");
-    }
-
-    // 4. Enforce HTTPS frontend URL in production
-    const frontendUrl = process.env.FRONTEND_URL || "";
-    if (frontendUrl && !frontendUrl.startsWith("https://")) {
-      warnings.push(
-        `FRONTEND_URL is not HTTPS: "${frontendUrl}". HTTPS is required for PCI compliance.`
-      );
     }
   }
 
-  // Report findings
+  // ── Demo mode notice ──────────────────────────────────────────────────────
+  if (process.env.DEMO_MODE === "true") {
+    if (isProduction && process.env.STRIPE_SECRET_KEY) {
+      errors.push("DEMO_MODE=true cannot be combined with a live Stripe key in production.");
+    }
+    warnings.push("DEMO_MODE=true — virtual cards are synthetic. Not for production use.");
+  }
+
+  // ── Production-only checks ─────────────────────────────────────────────────
+  if (isProduction) {
+    const frontendUrl = process.env.FRONTEND_URL || "";
+    if (frontendUrl && !frontendUrl.startsWith("https://")) {
+      warnings.push(`FRONTEND_URL is not HTTPS: "${frontendUrl}". Required for PCI compliance.`);
+    }
+  }
+
+  // ── Report ────────────────────────────────────────────────────────────────
   if (warnings.length) {
     warnings.forEach((w) => console.warn(`[CONFIG WARNING] ${w}`));
   }
@@ -73,13 +70,11 @@ function validateEnv() {
   if (errors.length) {
     console.error("\n❌  STARTUP BLOCKED — Environment configuration errors:\n");
     errors.forEach((e) => console.error(`   • ${e}`));
-    console.error(
-      "\nFix the above issues in your .env file before starting PinWay.\n"
-    );
+    console.error("\nFix the above issues before starting PinWay.\n");
     process.exit(1);
   }
 
-  console.log("✅  Environment validated successfully.");
+  console.log(`✅  Environment validated [${process.env.NODE_ENV || "development"}${process.env.DEMO_MODE === "true" ? " / DEMO" : ""}]`);
 }
 
 module.exports = validateEnv;
