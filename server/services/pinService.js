@@ -4,17 +4,18 @@
  *
  * HSM SUPPORT
  * ───────────
- * In production, set HSM_PROVIDER in your .env to activate hardware-level
- * key protection. Supported values:
+ * HSM_PROVIDER can select an optional key-management adapter:
  *
- *   HSM_PROVIDER=aws        → AWS CloudHSM (via PKCS#11 / aws-cloudhsm-pkcs11)
- *   HSM_PROVIDER=azure      → Azure Dedicated HSM / Key Vault
- *   HSM_PROVIDER=pkcs11     → Any on-premise HSM via node-pkcs11
- *   HSM_PROVIDER=software   → (default) bcrypt-only, no HSM
+ *   HSM_PROVIDER=aws        → AWS KMS API (HSM backing depends on AWS key configuration)
+ *   HSM_PROVIDER=azure      → Azure Key Vault key operations
+ *   HSM_PROVIDER=pkcs11     → INCOMPLETE vendor-specific PKCS#11 placeholder
+ *   HSM_PROVIDER=software   → (default) bcrypt-only storage
  *
- * When an HSM provider is configured, the PIN is additionally encrypted with
- * the HSM's master key before being stored. This satisfies PCI PIN Security
- * Requirement 18-3 (PIN Block encryption under a Hardware-resident key).
+ * The AWS and Azure adapters wrap the bcrypt hash with a remote key operation.
+ * This is not PCI PIN-block processing and does not establish PCI compliance.
+ * The PKCS#11 adapter is a stub and is not operational. If a configured
+ * provider fails, PIN creation must fail rather than silently downgrade to
+ * software-only storage.
  */
 
 const crypto = require("crypto");
@@ -24,9 +25,9 @@ const SALT_ROUNDS = 10;
 
 // ─── HSM Interface ────────────────────────────────────────────────────────────
 /**
- * Returns the active HSM adapter, or null if running in software mode.
- * Adapters are loaded lazily so the server still starts without HSM libs
- * installed — useful for local development.
+ * Returns the configured key-management adapter, or null only for explicit
+ * software mode. Unknown provider names fail closed instead of silently
+ * selecting software-only storage. Adapter dependencies are loaded lazily.
  */
 function getHsmAdapter() {
   const provider = (process.env.HSM_PROVIDER || "software").toLowerCase();
@@ -39,16 +40,16 @@ function getHsmAdapter() {
     case "pkcs11":
       return createPkcs11Adapter();
     case "software":
+      return null; // Explicit software-only mode
     default:
-      return null; // No HSM — bcrypt-only mode
+      throw new Error(`Unsupported HSM_PROVIDER "${provider}". Use aws, azure, pkcs11, or software.`);
   }
 }
 
 /**
- * AWS CloudHSM adapter.
- * Requires: @aws-sdk/client-kms (or cloudhsm-pkcs11 for direct HSM access).
- * Uses AWS KMS as a managed HSM proxy, which satisfies PCI HSM requirements
- * when using KMS Custom Key Stores backed by CloudHSM.
+ * AWS KMS adapter. Requires @aws-sdk/client-kms.
+ * KMS key custody and any CloudHSM backing must be configured and verified
+ * separately. This adapter does not implement PCI PIN-block operations.
  */
 function createAwsHsmAdapter() {
   return {
@@ -84,8 +85,9 @@ function createAwsHsmAdapter() {
 }
 
 /**
- * Azure Dedicated HSM / Key Vault adapter.
- * Requires: @azure/keyvault-keys
+ * Azure Key Vault key adapter. Requires @azure/keyvault-keys and @azure/identity.
+ * The selected key's HSM protection level must be configured and verified
+ * separately. This adapter does not implement PCI PIN-block operations.
  */
 function createAzureHsmAdapter() {
   return {
@@ -116,8 +118,9 @@ function createAzureHsmAdapter() {
 }
 
 /**
- * Generic PKCS#11 adapter for on-premise HSMs (SafeNet, Thales, nCipher, etc.)
- * Requires: graphene-pk11
+ * INCOMPLETE PKCS#11 placeholder for vendor-specific HSM integration.
+ * This adapter is deliberately non-operational until a vendor-specific
+ * session, key selection, and cryptographic mechanism are implemented.
  */
 function createPkcs11Adapter() {
   return {
@@ -179,14 +182,14 @@ async function hashPin(pin) {
     return bcryptHash; // Software-only mode
   }
 
-  // HSM mode: encrypt the bcrypt hash under the hardware key
+  // Configured key-management mode: fail closed if encryption is unavailable.
+  // Never store a software-only hash after an operator explicitly selected an adapter.
   try {
     const encrypted = await hsm.encrypt(bcryptHash);
     return `hsm:${hsm.name.split(" ")[0].toLowerCase()}:${encrypted}`;
   } catch (err) {
-    // Log and fall back to software mode rather than blocking PIN creation
-    console.error(`[HSM] Encryption failed, falling back to software: ${err.message}`);
-    return bcryptHash;
+    console.error(`[HSM] Encryption failed; refusing software fallback: ${err.message}`);
+    throw new Error("Configured key-management encryption failed; PIN was not created.");
   }
 }
 
