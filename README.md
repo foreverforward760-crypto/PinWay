@@ -18,7 +18,7 @@ PinWay explores a sender-controlled, PIN-based disbursement workflow. The reposi
 
 This repository does **not** establish that PinWay is connected to Visa, Mastercard, a card issuer, an acquiring bank, a payment processor, or a point-of-sale network. The MCC checks in this project are application-level rules; they do not by themselves authorize or settle real card transactions.
 
-The current code should not be represented as production-ready fintech infrastructure. The payment-network, issuer, processor, settlement, compliance, operational-security, and independent security-review requirements remain unproven. The PIN authorization route and balance updates also require a dedicated security and concurrency review before any real-money use.
+The current code should not be represented as production-ready fintech infrastructure. The payment-network, issuer, processor, settlement, compliance, operational-security, and independent security-review requirements remain unproven. The current authorization route requires the sender's authenticated account and searches only that user's active PINs. It does not implement the intended recipient-without-an-account redemption flow. PIN authorization now uses a row lock and database transaction for balance/use updates, but this change still requires integration tests against PostgreSQL and an independent security review before any real-money use.
 
 The optional key-management code is not a completed production HSM integration. The PKCS#11 adapter contains an explicit implementation stub. When an adapter is configured, encryption failure now stops PIN creation rather than silently falling back to software-only storage. Explicit software mode remains available for development.
 
