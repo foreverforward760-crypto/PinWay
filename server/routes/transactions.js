@@ -157,7 +157,9 @@ router.post(
         perTxLimit: Number(matchedPin.per_tx_limit),
         dailyLimit: Number(matchedPin.daily_limit),
         dailySpent,
-        allowedCategories: JSON.parse(matchedPin.categories),
+        allowedCategories: Array.isArray(matchedPin.categories)
+          ? matchedPin.categories
+          : JSON.parse(matchedPin.categories),
         geoRestriction: matchedPin.geo_restriction,
         remainingBalance: Number(matchedPin.remaining_amount),
         usesLeft: Number(matchedPin.uses_left),
