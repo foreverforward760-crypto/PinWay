@@ -20,7 +20,13 @@ This repository does **not** establish that PinWay is connected to Visa, Masterc
 
 The current code should not be represented as production-ready fintech infrastructure. The payment-network, issuer, processor, settlement, compliance, operational-security, and independent security-review requirements remain unproven. The PIN authorization route and balance updates also require a dedicated security and concurrency review before any real-money use.
 
-The optional HSM code is not a completed production integration. The PKCS#11 adapter contains an explicit implementation stub, and the PIN service can fall back to software-only bcrypt handling if HSM encryption fails.
+The optional key-management code is not a completed production HSM integration. The PKCS#11 adapter contains an explicit implementation stub. When an adapter is configured, encryption failure now stops PIN creation rather than silently falling back to software-only storage. Explicit software mode remains available for development.
+
+## Conceptual provenance
+
+The project owner states that the underlying concepts, product idea, and 0-9-0 / SAP framework applications in this repository originated with him. AI systems generated the implementation code and suggested technical mechanisms used to express those concepts. NSDT and the Container Rule were introduced by AI as supporting implementation mechanisms within the owner's framework, not as independent conceptual origins.
+
+This records the project owner's account; it is not a legal determination of copyright ownership, inventorship, or exclusive rights.
 
 ## Patent and legal status
 
