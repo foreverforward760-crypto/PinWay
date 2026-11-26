@@ -1,101 +1,46 @@
-# PinWay — Sender-Controlled PIN Payment Platform
+# PinWay — PIN-Controlled Payment Prototype
 
-> **U.S. Patent Pending (Provisional Application Filed 2026)**
-> Strategic acquisition inquiries: **LuminarkMeridian@gmail.com**
+**Status: prototype / development project. Not a production payment service.**
 
----
+PinWay explores a sender-controlled, PIN-based disbursement workflow. The repository contains a React frontend and an Express/PostgreSQL backend with account authentication, PIN generation and hashing, contact management, transaction-rule checks, and transaction records.
 
-PinWay is a production-ready, white-label fintech platform for issuing controlled PIN-based payments on existing Visa/Mastercard prepaid rails. No recipient account, app, or smartphone required. Sender retains full post-transmission control until the moment of redemption.
+## What the code currently contains
 
-## Core Differentiators
+- User registration and login using bcrypt password hashes and JWTs.
+- Generation of 16-digit PINs using Node.js cryptographic random-number functions.
+- PIN hashing with bcrypt.
+- Optional SMS and email delivery code.
+- Local rule checks for merchant category codes (MCC), country restrictions, transaction limits, remaining balance, and PIN-use limits.
+- PostgreSQL schema and migration scripts.
+- Docker and Railway configuration files.
 
-| Capability | PinWay | Western Union | Venmo/Zelle | Prepaid Card |
-|---|---|---|---|---|
-| No recipient account required | ✅ | ❌ Agent visit | ❌ Mandatory | ❌ Activation |
-| No recipient smartphone required | ✅ | ✅ | ❌ | ✅ |
-| Sender can revoke after sending | ✅ | ❌ | ❌ | ❌ |
-| Sender can modify amount post-send | ✅ | ❌ | ❌ | ❌ |
-| MCC / geographic spend controls | ✅ | ❌ | ❌ | ❌ |
-| Runs on existing Visa/MC rails | ✅ | ❌ Proprietary | ✅ | ✅ |
+## Important limitations
 
-## Use Cases
+This repository does **not** establish that PinWay is connected to Visa, Mastercard, a card issuer, an acquiring bank, a payment processor, or a point-of-sale network. The MCC checks in this project are application-level rules; they do not by themselves authorize or settle real card transactions.
 
-- **Gig economy** — instant contractor payouts without requiring bank accounts
-- **Insurance** — claim disbursements with spend category controls
-- **Disaster relief** — funds distributed via basic phone or landline
-- **Unbanked populations** — 22M+ U.S. adults served without onboarding friction
-- **Corporate expense** — controlled per-employee spend with MCC locks
+The current code should not be represented as production-ready fintech infrastructure. The payment-network, issuer, processor, settlement, compliance, operational-security, and independent security-review requirements remain unproven. The PIN authorization route and balance updates also require a dedicated security and concurrency review before any real-money use.
 
-## How It Works
+The optional HSM code is not a completed production integration. The PKCS#11 adapter contains an explicit implementation stub, and the PIN service can fall back to software-only bcrypt handling if HSM encryption fails.
 
-1. Sender deposits funds → system generates a CSPRNG PIN (bcrypt hashed, never stored plaintext)
-2. PIN delivered to recipient via SMS, voice call, or email
-3. Recipient enters PIN at any standard POS terminal or online
-4. Virtual Visa/MC card provisioned just-in-time at PIN validation
-5. Sender retains control at every step: freeze, rotate, revoke, or modify amount
+## Patent and legal status
 
-## Security Architecture
+**No patent application has been filed for PinWay.** Earlier repository text stating “Patent Pending,” “Provisional Application Filed,” or offering patent rights for acquisition was incorrect and has been removed. No patent rights are being represented or offered.
 
-- CSPRNG PIN generation (Node.js `crypto.randomInt` — NIST SP 800-90A)
-- bcrypt hashing at 10+ rounds — PIN plaintext destroyed after single transmission
-- PCI-PIN 18-3 compliant architecture — HSM-ready (AWS CloudHSM / Azure / PKCS#11)
-- Immutable audit log — DELETE privilege revoked at database level
-- Rate limiting on all endpoints; strict brute-force lockout on redemption
-- Constant-time PIN comparison (timing attack prevention)
-- Always-blocked MCCs: alcohol (5921), gambling (7995), tobacco (5993), adult services
+Ownership, AI-assisted contributions, third-party components, licensing, and any protectable human-authored material have not yet been independently reviewed. This README is not a legal opinion or a claim of patentability.
 
-## Tech Stack
+## Local development
 
-```
-Backend:    Node.js 20 + Express + PostgreSQL
-Frontend:   React 18 + Vite + Tailwind
-Auth:       JWT + bcrypt
-SMS/Email:  Twilio + SendGrid
-Deploy:     Docker + Railway (railway.toml included)
-HSM:        AWS KMS / Azure Key Vault / PKCS#11 (configurable)
-```
+Review the environment variables in `.env.example` and the setup instructions in [SETUP.md](./SETUP.md). Do not use real customer funds, payment credentials, or sensitive personal information in this prototype.
 
-## Quick Start
+## Technology
 
-```bash
-git clone https://github.com/foreverforward760-crypto/PinWay
-cd PinWay/server
-cp ../.env.example .env    # fill in JWT_SECRET + DATABASE_URL (or DB_* vars)
-npm install
-npm run migrate
-npm start
-```
+- Frontend: React and Vite
+- Backend: Node.js and Express
+- Database: PostgreSQL
+- Authentication: JWT and bcrypt
+- Notifications: Twilio and SendGrid libraries
+- Tests: Jest dependencies are present; test coverage and production security have not been independently established.
 
-**Deploy to Railway in 15 minutes:** see [DEPLOY_RAILWAY.md](./DEPLOY_RAILWAY.md)
+## Collaboration
 
-## Repository Structure
-
-```
-/
-├── server/              # Node.js API (Express + PostgreSQL)
-│   ├── config/          # DB pool, logger, env validation
-│   ├── middleware/       # JWT auth
-│   ├── migrations/       # PostgreSQL schema
-│   ├── routes/           # pins, transactions, auth, contacts
-│   └── services/         # PIN crypto, MCC enforcement, notifications
-├── src/                 # React 18 frontend
-├── railway.toml         # Railway deployment config
-├── docker-compose.yml   # Local full-stack dev
-└── DEPLOY_RAILWAY.md    # Step-by-step deployment guide
-```
-
-## Acquisition / Licensing
-
-This repository represents the full production codebase for a patent-pending payment technology. Available for:
-
-- **Full IP acquisition** — patent rights + codebase + documentation
-- **White-label licensing** — exclusive or non-exclusive
-- **Strategic partnership** — revenue share or joint venture
-
-**Contact:** LuminarkMeridian@gmail.com
-**Represented by:** Richard L. Stanfield — Meridian Axiom Alignment Technologies LLC, St. Petersburg, FL
-
----
-
-© 2026 Meridian Axiom Alignment Technologies LLC. All rights reserved.
-Patent pending. Not licensed for production use without written authorization.
+The project may be evaluated for further engineering, security, payment-partner, and regulatory feasibility work. No acquisition valuation or production-readiness claim is made.
