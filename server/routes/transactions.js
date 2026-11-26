@@ -234,6 +234,6 @@ router.post(
       if (client) client.release();
     }
   }
-
+);
 
 module.exports = router;
