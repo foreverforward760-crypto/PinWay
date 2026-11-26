@@ -46,19 +46,16 @@ function validateEnv() {
     }
   }
 
-  // ── Demo mode notice ──────────────────────────────────────────────────────
+  // ── Prototype mode notice ─────────────────────────────────────────────────
   if (process.env.DEMO_MODE === "true") {
-    if (isProduction && process.env.STRIPE_SECRET_KEY) {
-      errors.push("DEMO_MODE=true cannot be combined with a live Stripe key in production.");
-    }
-    warnings.push("DEMO_MODE=true — virtual cards are synthetic. Not for production use.");
+    warnings.push("DEMO_MODE=true — prototype mode only. No issuer, card-network, or payment-processor integration is implemented.");
   }
 
   // ── Production-only checks ─────────────────────────────────────────────────
   if (isProduction) {
     const frontendUrl = process.env.FRONTEND_URL || "";
     if (frontendUrl && !frontendUrl.startsWith("https://")) {
-      warnings.push(`FRONTEND_URL is not HTTPS: "${frontendUrl}". Required for PCI compliance.`);
+      warnings.push(`FRONTEND_URL is not HTTPS: "${frontendUrl}". Use HTTPS for secure browser communication; this check does not establish PCI compliance.`);
     }
   }
 
