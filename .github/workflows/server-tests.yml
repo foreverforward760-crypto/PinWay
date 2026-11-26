@@ -25,5 +25,9 @@ jobs:
           node-version: "20"
       - name: Install server dependencies
         run: npm install
+      - name: Check server JavaScript syntax
+        run: |
+          node --check routes/transactions.js
+          node --check services/pinService.js
       - name: Run server tests
         run: npm test -- --runInBand
