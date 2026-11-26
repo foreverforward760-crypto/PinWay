@@ -2,7 +2,7 @@ const express = require("express");
 const router = express.Router();
 const { v4: uuidv4 } = require("uuid");
 const { body, query: queryValidator, validationResult } = require("express-validator");
-const { query } = require("../config/database");
+const { query, pool } = require("../config/database");
 const { requireAuth } = require("../middleware/auth");
 const { verifyPin } = require("../services/pinService");
 const { evaluateTransaction } = require("../services/mccService");
@@ -66,16 +66,22 @@ router.post(
     body("merchantCity").optional().trim(),
   ],
   async (req, res, next) => {
+    let client;
+    let transactionOpen = false;
     try {
       const errors = validationResult(req);
       if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-      const { pin, mccCode, countryCode, amount, merchantName, merchantCity } = req.body;
+      const { pin, mccCode, countryCode, merchantName, merchantCity } = req.body;
+      const amount = Number(req.body.amount);
+      if (!Number.isFinite(amount) || amount <= 0) {
+        return res.status(400).json({ error: "Amount must be a positive finite number" });
+      }
 
-      // Find matching active PIN (must look up all active pins — we compare hashes)
-      // For scale, you'd add a PIN index or use a different lookup strategy
+      // Hash comparison happens before taking a row lock to reduce lock duration.
       const { rows: activePins } = await query(
-        `SELECT p.* FROM pins p
+        `SELECT p.id, p.pin_hash
+         FROM pins p
          WHERE p.user_id = $1
            AND p.status = 'active'
            AND p.expires_at > NOW()
@@ -83,86 +89,151 @@ router.post(
         [req.user.id]
       );
 
-      let matchedPin = null;
-      for (const candidate of activePins) {
-        if (await verifyPin(pin, candidate.pin_hash)) {
-          matchedPin = candidate;
+      let candidate = null;
+      for (const row of activePins) {
+        if (await verifyPin(pin, row.pin_hash)) {
+          candidate = row;
           break;
         }
       }
 
-      if (!matchedPin) {
-        // Log failed attempt for fraud monitoring
+      if (!candidate) {
         logger.warn(`Failed PIN authorization attempt for user ${req.user.id}`);
         return res.status(401).json({ approved: false, reason: "Invalid PIN" });
       }
 
-      // Get today's spend for this PIN
+      client = await pool.connect();
+      await client.query("BEGIN");
+      transactionOpen = true;
+
+      // Serialize all authorizations for the same PIN. Re-read and verify the
+      // hash under the lock so a concurrent rotate/freeze/revoke is respected.
+      const { rows: lockedRows } = await client.query(
+        `SELECT p.*
+         FROM pins p
+         WHERE p.id = $1
+           AND p.user_id = $2
+           AND p.status = 'active'
+           AND p.expires_at > NOW()
+           AND p.uses_left > 0
+         FOR UPDATE`,
+        [candidate.id, req.user.id]
+      );
+
+      if (!lockedRows.length) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return res.status(409).json({
+          approved: false,
+          reason: "PIN is no longer active, has expired, or has no uses remaining",
+        });
+      }
+
+      const matchedPin = lockedRows[0];
+      if (
+        matchedPin.pin_hash !== candidate.pin_hash ||
+        !(await verifyPin(pin, matchedPin.pin_hash))
+      ) {
+        await client.query("ROLLBACK");
+        transactionOpen = false;
+        return res.status(401).json({ approved: false, reason: "Invalid or rotated PIN" });
+      }
+
+      // Use UTC midnight consistently with the database's NOW() timestamps.
       const midnight = new Date();
-      midnight.setHours(0, 0, 0, 0);
-      const { rows: spendRows } = await query(
+      midnight.setUTCHours(0, 0, 0, 0);
+      const { rows: spendRows } = await client.query(
         `SELECT COALESCE(SUM(amount), 0) AS daily_spent
          FROM transactions
          WHERE pin_id = $1 AND type = 'approved' AND created_at >= $2`,
         [matchedPin.id, midnight]
       );
-      const dailySpent = parseFloat(spendRows[0].daily_spent);
+      const dailySpent = Number(spendRows[0].daily_spent || 0);
 
-      // Evaluate the transaction against all rules
-      const result = evaluateTransaction({
+      let result = evaluateTransaction({
         mccCode,
         countryCode,
         amount,
-        perTxLimit: parseFloat(matchedPin.per_tx_limit),
-        dailyLimit: parseFloat(matchedPin.daily_limit),
+        perTxLimit: Number(matchedPin.per_tx_limit),
+        dailyLimit: Number(matchedPin.daily_limit),
         dailySpent,
         allowedCategories: JSON.parse(matchedPin.categories),
         geoRestriction: matchedPin.geo_restriction,
-        remainingBalance: parseFloat(matchedPin.remaining_amount),
-        usesLeft: matchedPin.uses_left,
+        remainingBalance: Number(matchedPin.remaining_amount),
+        usesLeft: Number(matchedPin.uses_left),
       });
 
-      const txId = uuidv4();
-
+      let remainingBalance = Number(matchedPin.remaining_amount);
       if (result.approved) {
-        // Deduct balance and use count
-        await query(
+        // Atomic conditional debit. The row lock serializes PIN spending, and
+        // the WHERE clause is a second guard against overspend or exhausted uses.
+        const update = await client.query(
           `UPDATE pins
            SET remaining_amount = remaining_amount - $1,
                uses_left = uses_left - 1
-           WHERE id = $2`,
+           WHERE id = $2
+             AND status = 'active'
+             AND expires_at > NOW()
+             AND uses_left > 0
+             AND remaining_amount >= $1
+           RETURNING remaining_amount`,
           [amount, matchedPin.id]
         );
+
+        if (!update.rows.length) {
+          result = {
+            approved: false,
+            reason: "PIN balance or use count changed during authorization",
+          };
+        } else {
+          remainingBalance = Number(update.rows[0].remaining_amount);
+        }
       }
 
-      // Record transaction
-      await query(
+      const txId = uuidv4();
+      await client.query(
         `INSERT INTO transactions
            (id, pin_id, type, amount, merchant_name, merchant_city, mcc_code, country_code, reason, created_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
         [
-          txId, matchedPin.id,
+          txId,
+          matchedPin.id,
           result.approved ? "approved" : "declined",
-          amount, merchantName, merchantCity || null,
-          mccCode, countryCode,
+          amount,
+          merchantName,
+          merchantCity || null,
+          mccCode,
+          countryCode,
           result.reason || null,
         ]
       );
 
-      logger.info(`Transaction ${result.approved ? "APPROVED" : "DECLINED"}: $${amount} at ${merchantName} (${mccCode})`);
+      await client.query("COMMIT");
+      transactionOpen = false;
 
-      res.json({
+      logger.info(
+        `Transaction ${result.approved ? "APPROVED" : "DECLINED"}: $${amount} at ${merchantName} (${mccCode})`
+      );
+
+      return res.json({
         transactionId: txId,
         approved: result.approved,
         reason: result.reason,
-        remainingBalance: result.approved
-          ? parseFloat(matchedPin.remaining_amount) - amount
-          : parseFloat(matchedPin.remaining_amount),
+        remainingBalance,
       });
     } catch (err) {
-      next(err);
+      if (client && transactionOpen) {
+        try {
+          await client.query("ROLLBACK");
+        } catch (rollbackErr) {
+          logger.error("Transaction rollback failed", { error: rollbackErr.message });
+        }
+      }
+      return next(err);
+    } finally {
+      if (client) client.release();
     }
   }
-);
+
 
 module.exports = router;
